@@ -1,5 +1,5 @@
-import React, { useState, useCallback } from 'react';
-import { Upload, Download, Image, Type, FileImage, Layers, X, Check, ZoomIn, ArrowUpFromLine, ArrowUpDown } from 'lucide-react';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
+import { Upload, Download, Image, Type, FileImage, Layers, X, Check, ZoomIn, ArrowUpFromLine, ArrowUpDown, Loader2, Save } from 'lucide-react';
 import Cropper from 'react-easy-crop';
 
 // === 辅助函数：将裁剪后的区域转换为图片 ===
@@ -39,6 +39,48 @@ async function getCroppedImg(imageSrc, pixelCrop) {
   });
 }
 
+// === 新增组件：缩放容器 (解决手机预览错乱问题) ===
+// 强制内部以 750px 宽度渲染，然后缩小适应屏幕
+const ScaledPreview = ({ children }) => {
+  const containerRef = useRef(null);
+  const [scale, setScale] = useState(1);
+
+  useEffect(() => {
+    const handleResize = () => {
+      if (containerRef.current) {
+        const parentWidth = containerRef.current.offsetWidth;
+        // 目标宽度 750px (保证布局不乱)
+        const baseWidth = 750; 
+        // 计算缩放比例
+        const newScale = parentWidth / baseWidth;
+        setScale(newScale);
+      }
+    };
+
+    handleResize(); // 初始化
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
+  return (
+    <div ref={containerRef} className="w-full relative overflow-hidden" style={{ height: `${500 * scale}px` }}>
+      <div 
+        style={{ 
+          width: '750px', 
+          height: '500px', 
+          transform: `scale(${scale})`, 
+          transformOrigin: 'top left',
+          position: 'absolute',
+          top: 0,
+          left: 0
+        }}
+      >
+        {children}
+      </div>
+    </div>
+  );
+};
+
 export default function PostcardGenerator() {
   const [frontImage, setFrontImage] = useState(null);
   const [contentMode, setContentMode] = useState('text');
@@ -68,6 +110,10 @@ export default function PostcardGenerator() {
   const [croppedAreaPixels, setCroppedAreaPixels] = useState(null);
   const [isCropping, setIsCropping] = useState(false);
   const [croppingTarget, setCroppingTarget] = useState(null);
+
+  // === 新增：结果展示弹窗 (解决手机下载没反应问题) ===
+  const [resultModalOpen, setResultModalOpen] = useState(false);
+  const [resultImage, setResultImage] = useState(null);
 
   const stampOptions = [
     { type: 'img', src: 'https://flagcdn.com/w320/cn.png', label: 'CN' },
@@ -244,28 +290,17 @@ export default function PostcardGenerator() {
       
       if (customStamp) {
         const sImg = await loadImage(customStamp);
-        
-        // --- 核心修复：使用 Contain 模式，完整显示，不裁切 ---
-        // 目标绘制区域（留5px边距）
+        // Contain 逻辑
         const targetX = stampX + 5;
         const targetY = stampY + 5;
         const targetW = stampSize - 10;
         const targetH = stampSize * 1.2 - 10;
-
-        // 计算缩放比例：取宽比和高比中**较小**的那个（确保完整放入）
         const scale = Math.min(targetW / sImg.width, targetH / sImg.height);
-        
-        // 计算缩放后的实际宽高
         const drawW = sImg.width * scale;
         const drawH = sImg.height * scale;
-        
-        // 计算居中位置
         const drawX = targetX + (targetW - drawW) / 2;
         const drawY = targetY + (targetH - drawH) / 2;
-
-        // 绘制
         ctx.drawImage(sImg, drawX, drawY, drawW, drawH);
-        
       } else if (stamp) {
         ctx.fillStyle = '#333';
         ctx.font = '100px sans-serif';
@@ -351,48 +386,41 @@ export default function PostcardGenerator() {
     return canvas;
   };
 
-  const handleDownload = async (side) => {
+  // 修改：不再直接下载，而是打开弹窗
+  const handleGenerate = async (type) => {
     setIsGenerating(true);
     try {
-      const canvas = await generateCanvas(side);
-      const link = document.createElement('a');
-      link.download = `明信片-${side === 'front' ? '正面' : '背面'}.png`;
-      link.href = canvas.toDataURL('image/png');
-      link.click();
-    } catch (err) {
-      console.error(err);
-      alert('生成失败，请重试');
-    }
-    setIsGenerating(false);
-  };
+      let canvas;
+      if (type === 'both') {
+        const frontCanvas = await generateCanvas('front');
+        const backCanvas = await generateCanvas('back');
+        
+        canvas = document.createElement('canvas');
+        const gap = 40;
+        canvas.width = 1500;
+        canvas.height = 2000 + gap;
+        const ctx = canvas.getContext('2d');
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.drawImage(frontCanvas, 0, 0);
+        ctx.drawImage(backCanvas, 0, 1000 + gap);
+      } else {
+        canvas = await generateCanvas(type);
+      }
 
-  const handleDownloadBoth = async () => {
-    setIsGenerating(true);
-    try {
-      const frontCanvas = await generateCanvas('front');
-      const backCanvas = await generateCanvas('back');
-      
-      const mergeCanvas = document.createElement('canvas');
-      const gap = 40;
-      mergeCanvas.width = 1500;
-      mergeCanvas.height = 2000 + gap;
-      
-      const ctx = mergeCanvas.getContext('2d');
-      ctx.fillStyle = '#ffffff';
-      ctx.fillRect(0, 0, mergeCanvas.width, mergeCanvas.height);
-      
-      ctx.drawImage(frontCanvas, 0, 0);
-      ctx.drawImage(backCanvas, 0, 1000 + gap);
-      
-      const link = document.createElement('a');
-      link.download = `明信片-双面合并.png`;
-      link.href = mergeCanvas.toDataURL('image/png');
-      link.click();
+      // 转换为 Blob URL 显示在弹窗中 (比 DataURL 更省内存)
+      canvas.toBlob((blob) => {
+        const url = URL.createObjectURL(blob);
+        setResultImage(url);
+        setResultModalOpen(true);
+        setIsGenerating(false);
+      }, 'image/jpeg', 0.9); // 使用 JPEG 0.9 质量，减小体积
+
     } catch (err) {
       console.error(err);
-      alert('生成失败，请重试');
+      alert('生成失败，可能是内存不足，请重试');
+      setIsGenerating(false);
     }
-    setIsGenerating(false);
   };
 
   const handleStampSelect = (item) => {
@@ -466,7 +494,6 @@ export default function PostcardGenerator() {
                     className="w-full h-32 p-3 bg-stone-50 border border-stone-200 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent resize-none text-sm"
                   />
                   
-                  {/* 字号、字体、对齐控制栏 */}
                   <div className="space-y-3">
                     <div className="flex items-center gap-4">
                       <div className="flex-1">
@@ -495,7 +522,6 @@ export default function PostcardGenerator() {
                       </div>
                     </div>
                     
-                    {/* 垂直对齐控制 */}
                     <div>
                       <label className="text-xs font-medium text-stone-500 mb-1 block">垂直对齐</label>
                       <div className="flex gap-2">
@@ -606,107 +632,118 @@ export default function PostcardGenerator() {
           {/* 右侧预览 */}
           <div className="lg:col-span-7 space-y-6">
             <div className="bg-white p-4 rounded-xl shadow-sm border border-stone-200">
-              <div className="aspect-[3/2] bg-stone-200 rounded overflow-hidden relative group">
-                {frontImage ? (
-                  <img src={frontImage} alt="Front" className="w-full h-full object-cover" />
-                ) : (
-                  <div className="absolute inset-0 flex items-center justify-center text-stone-400">
-                    <span className="text-lg font-serif">正面预览区域</span>
-                  </div>
-                )}
-              </div>
+              {/* 修改：使用 ScaledPreview 包装，解决手机端布局错乱 */}
+              <ScaledPreview>
+                <div className="w-[750px] h-[500px] bg-stone-200 relative group overflow-hidden">
+                  {frontImage ? (
+                    <img src={frontImage} alt="Front" className="w-full h-full object-cover" />
+                  ) : (
+                    <div className="absolute inset-0 flex items-center justify-center text-stone-400">
+                      <span className="text-2xl font-serif">正面预览区域</span>
+                    </div>
+                  )}
+                </div>
+              </ScaledPreview>
+              
               <button 
-                onClick={() => handleDownload('front')}
+                onClick={() => handleGenerate('front')}
                 disabled={!frontImage || isGenerating}
                 className="w-full mt-3 py-2 bg-stone-800 text-white rounded-lg hover:bg-stone-700 disabled:opacity-50 text-sm flex items-center justify-center gap-2"
               >
-                <Download className="w-4 h-4" /> 下载正面图
+                {isGenerating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
+                生成正面图
               </button>
             </div>
 
             <div className="bg-white p-4 rounded-xl shadow-sm border border-stone-200">
-              <div className="aspect-[3/2] bg-[#fff8dc] rounded relative overflow-hidden text-stone-800 select-none">
-                <div className="absolute left-1/2 top-8 bottom-8 w-px bg-[#d4a574]"></div>
+              {/* 修改：使用 ScaledPreview 包装背面 */}
+              <ScaledPreview>
+                <div className="w-[750px] h-[500px] bg-[#fff8dc] relative overflow-hidden text-stone-800 select-none">
+                  {/* 中线 */}
+                  <div className="absolute left-1/2 top-8 bottom-8 w-px bg-[#d4a574]"></div>
 
-                {/* 左侧内容预览 - 支持垂直居中 */}
-                <div 
-                  className="absolute left-8 top-12 bottom-12 right-[52%] overflow-hidden flex flex-col"
-                  style={{
-                    justifyContent: textStyle.verticalAlign === 'center' ? 'center' : 'flex-start'
-                  }}
-                >
-                  {contentMode === 'text' ? (
-                    <p style={{
-                      fontSize: `${textStyle.fontSize * 0.4}px`,
-                      fontFamily: textStyle.fontFamily,
-                      lineHeight: 1.4,
-                      whiteSpace: 'pre-wrap'
-                    }}>{contentText || '在此处预览文字内容...'}</p>
-                  ) : contentImage ? (
-                    <img src={contentImage} className="w-full h-full object-cover" alt="handwriting" />
-                  ) : null}
-                </div>
-
-                <div className="absolute right-0 top-0 bottom-0 left-[50%] p-8">
-                  {/* 邮编框 */}
-                  <div className="absolute top-8 left-8 flex gap-2">
-                    {[...Array(6)].map((_,i) => (
-                      <div key={i} className="w-6 h-6 border border-red-700"></div>
-                    ))}
+                  {/* 左侧内容预览 */}
+                  <div 
+                    className="absolute left-8 top-12 bottom-12 right-[52%] overflow-hidden flex flex-col"
+                    style={{
+                      justifyContent: textStyle.verticalAlign === 'center' ? 'center' : 'flex-start'
+                    }}
+                  >
+                    {contentMode === 'text' ? (
+                      <p style={{
+                        fontSize: `${textStyle.fontSize * 0.4}px`,
+                        fontFamily: textStyle.fontFamily,
+                        lineHeight: 1.4,
+                        whiteSpace: 'pre-wrap'
+                      }}>{contentText || '在此处预览文字内容...'}</p>
+                    ) : contentImage ? (
+                      <img src={contentImage} className="w-full h-full object-cover" alt="handwriting" />
+                    ) : null}
                   </div>
 
-                  {/* 邮票 - 修改：object-contain 完整显示 */}
-                  <div className="absolute top-8 right-8 w-24 h-28 bg-white border border-stone-200 flex items-center justify-center shadow-sm">
-                     {customStamp ? (
-                       <img src={customStamp} className="w-full h-full object-contain p-1" alt="stamp" />
-                     ) : (
-                       <span className="text-4xl">{stamp}</span>
-                     )}
-                  </div>
-
-                  {/* 邮戳 */}
-                  <div className="absolute top-28 right-24 w-16 h-16 rounded-full border-2 border-red-800/60 flex flex-col items-center justify-center rotate-[-15deg] bg-red-50/10">
-                    <span className="text-[10px] text-red-800 font-bold leading-none mb-0.5">{postmarkDate}</span>
-                    <span className="text-[8px] text-red-800 font-serif uppercase tracking-tighter leading-none">
-                      {postmarkLocation || 'POST OFFICE'}
-                    </span>
-                  </div>
-
-                  {/* 收件人预览区域 */}
-                  <div className="absolute top-32 left-8 right-8">
-                    <div className="border-b border-stone-400 pb-1 mb-4 text-sm font-serif min-h-[1.5rem] flex items-end w-1/2">
-                       {recipientInfo.name ? `To: ${recipientInfo.name}` : ''}
+                  <div className="absolute right-0 top-0 bottom-0 left-[50%] p-8">
+                    {/* 邮编框 */}
+                    <div className="absolute top-8 left-8 flex gap-2">
+                      {[...Array(6)].map((_,i) => (
+                        <div key={i} className="w-6 h-6 border border-red-700"></div>
+                      ))}
                     </div>
-                    {recipientInfo.address ? (
-                      recipientInfo.address.split('\n').map((line, i) => (
-                        <div key={i} className="border-b border-stone-400 pb-1 mb-4 text-sm font-serif min-h-[1.5rem] flex items-end">
-                          {line}
-                        </div>
-                      ))
-                    ) : (
-                      <>
-                        <div className="border-b border-stone-400 h-6 mb-4"></div>
-                        <div className="border-b border-stone-400 h-6 mb-4"></div>
-                      </>
-                    )}
+
+                    {/* 邮票 */}
+                    <div className="absolute top-8 right-8 w-24 h-28 bg-white border border-stone-200 flex items-center justify-center shadow-sm">
+                      {customStamp ? (
+                        <img src={customStamp} className="w-full h-full object-contain p-1" alt="stamp" />
+                      ) : (
+                        <span className="text-4xl">{stamp}</span>
+                      )}
+                    </div>
+
+                    {/* 邮戳 */}
+                    <div className="absolute top-28 right-24 w-16 h-16 rounded-full border-2 border-red-800/60 flex flex-col items-center justify-center rotate-[-15deg] bg-red-50/10">
+                      <span className="text-[10px] text-red-800 font-bold leading-none mb-0.5">{postmarkDate}</span>
+                      <span className="text-[8px] text-red-800 font-serif uppercase tracking-tighter leading-none">
+                        {postmarkLocation || 'POST OFFICE'}
+                      </span>
+                    </div>
+
+                    {/* 收件人预览区域 */}
+                    <div className="absolute top-32 left-8 right-8">
+                      <div className="border-b border-stone-400 pb-1 mb-4 text-sm font-serif min-h-[1.5rem] flex items-end w-1/2">
+                        {recipientInfo.name ? `To: ${recipientInfo.name}` : ''}
+                      </div>
+                      {recipientInfo.address ? (
+                        recipientInfo.address.split('\n').map((line, i) => (
+                          <div key={i} className="border-b border-stone-400 pb-1 mb-4 text-sm font-serif min-h-[1.5rem] flex items-end">
+                            {line}
+                          </div>
+                        ))
+                      ) : (
+                        <>
+                          <div className="border-b border-stone-400 h-6 mb-4"></div>
+                          <div className="border-b border-stone-400 h-6 mb-4"></div>
+                        </>
+                      )}
+                    </div>
                   </div>
                 </div>
-              </div>
+              </ScaledPreview>
               
               <div className="flex gap-3 mt-3">
                 <button 
-                  onClick={() => handleDownload('back')}
+                  onClick={() => handleGenerate('back')}
                   disabled={isGenerating}
                   className="flex-1 py-2 bg-stone-800 text-white rounded-lg hover:bg-stone-700 disabled:opacity-50 text-sm flex items-center justify-center gap-2"
                 >
-                  <Download className="w-4 h-4" /> 下载背面
+                  {isGenerating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
+                  生成背面
                 </button>
                 <button 
-                  onClick={handleDownloadBoth}
+                  onClick={() => handleGenerate('both')}
                   disabled={!frontImage || isGenerating}
                   className="flex-1 py-2 bg-amber-700 text-white rounded-lg hover:bg-amber-800 disabled:opacity-50 text-sm flex items-center justify-center gap-2"
                 >
-                  <Layers className="w-4 h-4" /> 合并下载双面
+                  {isGenerating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Layers className="w-4 h-4" />}
+                  合并生成
                 </button>
               </div>
             </div>
@@ -735,7 +772,6 @@ export default function PostcardGenerator() {
                   aspect={
                     croppingTarget === 'front' ? 3 / 2 : 
                     croppingTarget === 'content' ? 650 / 840 : 
-                    // 修改：邮票裁剪比例锁定为 5:6 (即 1:1.2)
                     5 / 6
                   }
                   onCropChange={setCrop}
@@ -770,9 +806,40 @@ export default function PostcardGenerator() {
           </div>
         )}
 
-{/* 👆 上面是裁剪弹窗代码的结束括号 */}
+        {/* 新增：结果展示弹窗 (移动端友好) */}
+        {resultModalOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 animate-in fade-in duration-200">
+            <div className="bg-white rounded-xl w-full max-w-3xl overflow-hidden flex flex-col max-h-[90vh]">
+              <div className="p-4 border-b flex justify-between items-center bg-stone-50">
+                <h3 className="font-bold text-stone-800 flex items-center gap-2">
+                  <Check className="w-5 h-5 text-green-600" />
+                  生成成功
+                </h3>
+                <button onClick={() => setResultModalOpen(false)} className="text-stone-500 hover:text-stone-800">
+                  <X className="w-6 h-6" />
+                </button>
+              </div>
+              <div className="flex-1 overflow-auto p-4 bg-stone-100 flex items-center justify-center">
+                <img src={resultImage} alt="Result" className="max-w-full h-auto shadow-lg rounded" />
+              </div>
+              <div className="p-4 bg-white border-t border-stone-200 text-center">
+                <p className="text-sm text-stone-500 mb-3">
+                  <span className="hidden md:inline">点击右键选择“图片另存为”保存</span>
+                  <span className="md:hidden font-bold text-amber-700">长按上方图片即可保存到手机</span>
+                </p>
+                <a 
+                  href={resultImage} 
+                  download={`postcard-${Date.now()}.jpg`}
+                  className="inline-flex items-center gap-2 px-6 py-2 bg-stone-800 text-white rounded-full hover:bg-stone-700 text-sm font-medium"
+                >
+                  <Save className="w-4 h-4" />
+                  电脑端直接下载
+                </a>
+              </div>
+            </div>
+          </div>
+        )}
 
-        {/* 👇 直接在这里接上页脚代码 👇 */}
         <footer className="mt-12 text-center text-stone-400 text-xs pb-4">
           <p className="mb-1">
             🔒 隐私安全声明：本工具为纯前端应用，所有图片与文字仅在您的设备本地处理。
@@ -785,7 +852,7 @@ export default function PostcardGenerator() {
           </p>
         </footer>
 
-      </div> {/* max-w-7xl 结束 */}
-    </div> // 最外层 div 结束
+      </div>
+    </div>
   );
 }
