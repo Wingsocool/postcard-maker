@@ -52,7 +52,6 @@ export default function PostcardGenerator() {
   const [stamp, setStamp] = useState(null); 
   const [customStamp, setCustomStamp] = useState('https://flagcdn.com/w320/cn.png');
   const [postmarkDate, setPostmarkDate] = useState(new Date().toLocaleDateString('zh-CN'));
-  // 新增：邮戳地点，默认为 POST OFFICE
   const [postmarkLocation, setPostmarkLocation] = useState('Post Office');
   
   const [textStyle, setTextStyle] = useState({
@@ -245,16 +244,28 @@ export default function PostcardGenerator() {
       
       if (customStamp) {
         const sImg = await loadImage(customStamp);
-        const innerX = stampX + 15;
-        const innerY = stampY + 15;
-        const innerW = stampSize - 30;
-        const innerH = stampSize * 1.2 - 30;
-        const scale = Math.min(innerW / sImg.width, innerH / sImg.height);
+        
+        // --- 核心修复：使用 Contain 模式，完整显示，不裁切 ---
+        // 目标绘制区域（留5px边距）
+        const targetX = stampX + 5;
+        const targetY = stampY + 5;
+        const targetW = stampSize - 10;
+        const targetH = stampSize * 1.2 - 10;
+
+        // 计算缩放比例：取宽比和高比中**较小**的那个（确保完整放入）
+        const scale = Math.min(targetW / sImg.width, targetH / sImg.height);
+        
+        // 计算缩放后的实际宽高
         const drawW = sImg.width * scale;
         const drawH = sImg.height * scale;
-        const drawX = innerX + (innerW - drawW) / 2;
-        const drawY = innerY + (innerH - drawH) / 2;
+        
+        // 计算居中位置
+        const drawX = targetX + (targetW - drawW) / 2;
+        const drawY = targetY + (targetH - drawH) / 2;
+
+        // 绘制
         ctx.drawImage(sImg, drawX, drawY, drawW, drawH);
+        
       } else if (stamp) {
         ctx.fillStyle = '#333';
         ctx.font = '100px sans-serif';
@@ -292,15 +303,11 @@ export default function PostcardGenerator() {
       ctx.fillStyle = 'rgba(180, 40, 40, 0.8)';
       ctx.textAlign = 'center';
       
-      // 绘制日期
       ctx.font = 'bold 16px Arial';
       ctx.fillText(postmarkDate, 0, -10);
       
-      // 绘制地点 (默认为 POST OFFICE)
       ctx.font = '12px Arial';
-      // 转大写看起来更像邮戳
       const locationText = (postmarkLocation || "POST OFFICE").toUpperCase();
-      // 如果地点名字太长，稍微缩小字体
       if (locationText.length > 15) ctx.font = '10px Arial';
       ctx.fillText(locationText, 0, 15);
       
@@ -648,16 +655,16 @@ export default function PostcardGenerator() {
                     ))}
                   </div>
 
-                  {/* 邮票 */}
+                  {/* 邮票 - 修改：object-contain 完整显示 */}
                   <div className="absolute top-8 right-8 w-24 h-28 bg-white border border-stone-200 flex items-center justify-center shadow-sm">
                      {customStamp ? (
-                       <img src={customStamp} className="w-full h-full object-contain p-2" alt="stamp" />
+                       <img src={customStamp} className="w-full h-full object-contain p-1" alt="stamp" />
                      ) : (
                        <span className="text-4xl">{stamp}</span>
                      )}
                   </div>
 
-                  {/* 邮戳 - 预览同步显示地点 */}
+                  {/* 邮戳 */}
                   <div className="absolute top-28 right-24 w-16 h-16 rounded-full border-2 border-red-800/60 flex flex-col items-center justify-center rotate-[-15deg] bg-red-50/10">
                     <span className="text-[10px] text-red-800 font-bold leading-none mb-0.5">{postmarkDate}</span>
                     <span className="text-[8px] text-red-800 font-serif uppercase tracking-tighter leading-none">
@@ -728,7 +735,8 @@ export default function PostcardGenerator() {
                   aspect={
                     croppingTarget === 'front' ? 3 / 2 : 
                     croppingTarget === 'content' ? 650 / 840 : 
-                    1 
+                    // 修改：邮票裁剪比例锁定为 5:6 (即 1:1.2)
+                    5 / 6
                   }
                   onCropChange={setCrop}
                   onZoomChange={setZoom}
@@ -762,7 +770,22 @@ export default function PostcardGenerator() {
           </div>
         )}
 
-      </div>
-    </div>
+{/* 👆 上面是裁剪弹窗代码的结束括号 */}
+
+        {/* 👇 直接在这里接上页脚代码 👇 */}
+        <footer className="mt-12 text-center text-stone-400 text-xs pb-4">
+          <p className="mb-1">
+            🔒 隐私安全声明：本工具为纯前端应用，所有图片与文字仅在您的设备本地处理。
+          </p>
+          <p>
+            我们不会上传或存储您的任何个人信息，刷新页面即清除数据。
+          </p>
+          <p className="mt-2 opacity-60">
+            © {new Date().getFullYear()} Travel Postcard Generator. Made by Wingsocool.
+          </p>
+        </footer>
+
+      </div> {/* max-w-7xl 结束 */}
+    </div> // 最外层 div 结束
   );
 }

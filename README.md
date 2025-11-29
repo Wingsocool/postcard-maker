@@ -1,16 +1,38 @@
-# React + Vite
+# 🌍 旅行明信片工坊 (Travel Postcard Generator)
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+一个基于 React + Vite 的纯前端在线工具，帮助你快速生成带有复古邮戳和邮票风格的旅行明信片。
 
-Currently, two official plugins are available:
+🔗 **在线体验**: [https://lumiere.press/postcard-maker/](https://lumiere.press/postcard-maker/)
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+## ✨ 功能特点
 
-## React Compiler
+- **双面设计**：支持生成明信片正面风景图与背面寄语。
+- **智能裁剪**：内置图片裁剪工具，支持缩放与拖拽，完美适配明信片比例。
+- **所见即所得**：实时预览排版效果，支持文字自动换行与垂直对齐（顶端/居中）。
+- **个性化定制**：
+  - 支持上传自定义邮票或使用内置国旗/图标。
+  - 可自定义邮戳日期与地点（如 PARIS, TOKYO）。
+  - 支持手写文字图片上传。
+- **高清导出**：一键下载正面、背面或双面拼接的高清大图，方便打印。
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+## 🔒 隐私与安全声明 (Privacy Policy)
 
-## Expanding the ESLint configuration
+**本工具是一个纯前端应用 (Client-side Application)。**
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+- **无数据上传**：您上传的所有照片、输入的文字信息均**仅在您的浏览器本地内存中处理**。
+- **无后台存储**：我们没有后端服务器，不会收集、存储或通过网络发送您的任何个人信息。
+- **安全无痕**：刷新页面后，所有数据将被清除，不会在服务器留下任何痕迹。
+
+请放心使用，您的隐私完全掌握在自己手中。
+
+## 🛠️ 技术栈
+
+- React
+- Vite
+- Tailwind CSS
+- React Easy Crop (图片裁剪)
+- Lucide React (图标库)
+- GitHub Actions (自动部署)
+
+---
+Made with ❤️ by Wingsocool
