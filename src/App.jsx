@@ -1,0 +1,584 @@
+import React, { useState } from 'react';
+import { Upload, Download, Image, Type, FileImage, Layers } from 'lucide-react';
+
+export default function PostcardGenerator() {
+  const [frontImage, setFrontImage] = useState(null);
+  const [contentMode, setContentMode] = useState('text');
+  const [contentText, setContentText] = useState('');
+  const [contentImage, setContentImage] = useState(null);
+  const [recipientInfo, setRecipientInfo] = useState({
+    name: '',
+    address: ''
+  });
+  
+  const [stamp, setStamp] = useState(null); 
+  // 默认加载中国国旗
+  const [customStamp, setCustomStamp] = useState('https://flagcdn.com/w320/cn.png');
+  
+  const [postmarkDate, setPostmarkDate] = useState(new Date().toLocaleDateString('zh-CN'));
+  
+  const [textStyle, setTextStyle] = useState({
+    fontSize: 50,
+    fontFamily: 'KaiTi'
+  });
+  const [isGenerating, setIsGenerating] = useState(false);
+
+  const stampOptions = [
+    { type: 'img', src: 'https://flagcdn.com/w320/cn.png', label: 'CN' },
+    { type: 'img', src: 'https://flagcdn.com/w320/us.png', label: 'US' },
+    { type: 'img', src: 'https://flagcdn.com/w320/eu.png', label: 'EU' },
+    { type: 'img', src: 'https://flagcdn.com/w320/gb.png', label: 'GB' },
+    { type: 'text', content: '🐉', label: 'Dragon' },
+    { type: 'text', content: '🌸', label: 'Flower' },
+    { type: 'text', content: '🏛️', label: 'Museum' },
+    { type: 'text', content: '🌊', label: 'Wave' },
+  ];
+
+  const handleImageUpload = (e, setter) => {
+    const file = e.target.files[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onload = (event) => setter(event.target.result);
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const loadImage = (src) => {
+    return new Promise((resolve, reject) => {
+      const img = new window.Image();
+      img.crossOrigin = "Anonymous";
+      img.onload = () => resolve(img);
+      img.onerror = reject;
+      img.src = src;
+    });
+  };
+
+  const wrapText = (ctx, text, x, y, maxWidth, lineHeight) => {
+    const paragraphs = text.split('\n');
+    let currentY = y;
+
+    paragraphs.forEach(paragraph => {
+      let line = '';
+      const words = paragraph.split(''); 
+      
+      for (let n = 0; n < words.length; n++) {
+        const testLine = line + words[n];
+        const metrics = ctx.measureText(testLine);
+        const testWidth = metrics.width;
+        
+        if (testWidth > maxWidth && n > 0) {
+          ctx.fillText(line, x, currentY);
+          line = words[n];
+          currentY += lineHeight;
+        } else {
+          line = testLine;
+        }
+      }
+      ctx.fillText(line, x, currentY);
+      currentY += lineHeight;
+    });
+  };
+
+  const generateCanvas = async (side) => {
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+    const width = 1500;
+    const height = 1000;
+    canvas.width = width;
+    canvas.height = height;
+
+    if (side === 'front') {
+      if (frontImage) {
+        const img = await loadImage(frontImage);
+        const ratio = Math.max(width / img.width, height / img.height);
+        const centerShift_x = (width - img.width * ratio) / 2;
+        const centerShift_y = (height - img.height * ratio) / 2;
+        ctx.drawImage(img, 0, 0, img.width, img.height, centerShift_x, centerShift_y, img.width * ratio, img.height * ratio);
+      } else {
+        ctx.fillStyle = '#e0e0e0';
+        ctx.fillRect(0, 0, width, height);
+        ctx.fillStyle = '#999';
+        ctx.font = '48px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('请上传景点图片', width / 2, height / 2);
+      }
+    } else {
+      // === 背面绘制 ===
+      ctx.fillStyle = '#fff8dc';
+      ctx.fillRect(0, 0, width, height);
+      
+      // 中线
+      ctx.strokeStyle = '#d4a574';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(width / 2, 50);
+      ctx.lineTo(width / 2, height - 50);
+      ctx.stroke();
+      
+      // 左侧内容
+      if (contentMode === 'text' && contentText) {
+        ctx.fillStyle = '#333';
+        ctx.font = `${textStyle.fontSize}px ${textStyle.fontFamily}, serif`;
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'top';
+        wrapText(ctx, contentText, 60, 80, (width / 2) - 120, textStyle.fontSize * 1.4);
+      } else if (contentMode === 'image' && contentImage) {
+        const img = await loadImage(contentImage);
+        const contentWidth = width / 2 - 100;
+        const contentHeight = height - 160;
+        const scale = Math.min(contentWidth / img.width, contentHeight / img.height);
+        const w = img.width * scale;
+        const h = img.height * scale;
+        ctx.drawImage(img, 60 + (contentWidth - w)/2, 80 + (contentHeight - h)/2, w, h);
+      }
+
+      // === 右侧区域 ===
+      const rightBaseX = width / 2;
+      
+      // 1. 邮编框
+      const zipBoxY = 60;
+      const zipBoxSize = 50;
+      const zipBoxGap = 10;
+      const zipStartX = rightBaseX + 60;
+      
+      ctx.strokeStyle = '#d32f2f';
+      ctx.lineWidth = 2;
+      for (let i = 0; i < 6; i++) {
+        ctx.strokeRect(zipStartX + i * (zipBoxSize + zipBoxGap), zipBoxY, zipBoxSize, zipBoxSize);
+      }
+
+      // 2. 邮票
+      const stampSize = 220;
+      const stampX = width - stampSize - 60;
+      const stampY = 60;
+      
+      // 绘制白色背景
+      ctx.fillStyle = '#fff';
+      ctx.fillRect(stampX, stampY, stampSize, stampSize * 1.2); 
+      
+      if (customStamp) {
+        const sImg = await loadImage(customStamp);
+        
+        // --- 核心修复：计算图片缩放比例，保持完整不变形 ---
+        // 邮票内部可绘制区域（留出 15px 边距）
+        const innerX = stampX + 15;
+        const innerY = stampY + 15;
+        const innerW = stampSize - 30;
+        const innerH = stampSize * 1.2 - 30;
+
+        // 计算 "Contain" 比例：取宽比和高比中较小的那个
+        const scale = Math.min(innerW / sImg.width, innerH / sImg.height);
+        
+        const drawW = sImg.width * scale;
+        const drawH = sImg.height * scale;
+        
+        // 居中绘制
+        const drawX = innerX + (innerW - drawW) / 2;
+        const drawY = innerY + (innerH - drawH) / 2;
+
+        ctx.drawImage(sImg, drawX, drawY, drawW, drawH);
+        
+      } else if (stamp) {
+        ctx.fillStyle = '#333';
+        ctx.font = '100px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(stamp, stampX + stampSize / 2, stampY + (stampSize * 1.2) / 2);
+      }
+
+      // 邮票齿孔
+      ctx.fillStyle = '#fff8dc';
+      const holeR = 6;
+      for(let i=0; i<=10; i++) {
+         ctx.beginPath(); ctx.arc(stampX + i*(stampSize/10), stampY, holeR, 0, Math.PI*2); ctx.fill();
+         ctx.beginPath(); ctx.arc(stampX + i*(stampSize/10), stampY + stampSize * 1.2, holeR, 0, Math.PI*2); ctx.fill();
+      }
+      for(let i=0; i<=12; i++) {
+         ctx.beginPath(); ctx.arc(stampX, stampY + i*(stampSize*1.2/12), holeR, 0, Math.PI*2); ctx.fill();
+         ctx.beginPath(); ctx.arc(stampX + stampSize, stampY + i*(stampSize*1.2/12), holeR, 0, Math.PI*2); ctx.fill();
+      }
+
+      // 3. 邮戳
+      const markX = stampX - 20;
+      const markY = stampY + stampSize + 20;
+      const markRadius = 70;
+      
+      ctx.strokeStyle = 'rgba(180, 40, 40, 0.8)';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.arc(markX, markY, markRadius, 0, Math.PI * 2);
+      ctx.stroke();
+      
+      ctx.save();
+      ctx.translate(markX, markY);
+      ctx.rotate(-Math.PI / 6);
+      ctx.fillStyle = 'rgba(180, 40, 40, 0.8)';
+      ctx.textAlign = 'center';
+      ctx.font = 'bold 16px Arial';
+      ctx.fillText(postmarkDate, 0, 0);
+      ctx.font = '12px Arial';
+      ctx.fillText("POST OFFICE", 0, 20);
+      ctx.restore();
+
+      // 4. 收件人信息
+      const lineStartX = rightBaseX + 60;
+      const lineEndX = width - 60;
+      const nameLineEndX = markX - markRadius - 20; 
+      
+      let lineY = 280; 
+
+      ctx.font = '32px "KaiTi", serif';
+      ctx.fillStyle = '#000';
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'bottom';
+
+      // To 姓名行
+      if (recipientInfo.name) {
+         ctx.fillText(`To: ${recipientInfo.name}`, lineStartX, lineY - 10);
+      }
+      ctx.strokeStyle = '#666';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(lineStartX, lineY);
+      ctx.lineTo(nameLineEndX, lineY); 
+      ctx.stroke();
+
+      // 地址行
+      const addressLines = recipientInfo.address ? recipientInfo.address.split('\n') : [];
+      const linesToDraw = addressLines.length > 0 ? addressLines : ['', ''];
+      
+      linesToDraw.forEach((line) => {
+        lineY += 90;
+        if (line) ctx.fillText(line, lineStartX, lineY - 10);
+        ctx.beginPath();
+        ctx.moveTo(lineStartX, lineY);
+        ctx.lineTo(lineEndX, lineY);
+        ctx.stroke();
+      });
+    }
+
+    return canvas;
+  };
+
+  const handleDownload = async (side) => {
+    setIsGenerating(true);
+    try {
+      const canvas = await generateCanvas(side);
+      const link = document.createElement('a');
+      link.download = `明信片-${side === 'front' ? '正面' : '背面'}.png`;
+      link.href = canvas.toDataURL('image/png');
+      link.click();
+    } catch (err) {
+      console.error(err);
+      alert('生成失败，请重试');
+    }
+    setIsGenerating(false);
+  };
+
+  const handleDownloadBoth = async () => {
+    setIsGenerating(true);
+    try {
+      const frontCanvas = await generateCanvas('front');
+      const backCanvas = await generateCanvas('back');
+      
+      const mergeCanvas = document.createElement('canvas');
+      const gap = 40;
+      mergeCanvas.width = 1500;
+      mergeCanvas.height = 2000 + gap;
+      
+      const ctx = mergeCanvas.getContext('2d');
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, mergeCanvas.width, mergeCanvas.height);
+      
+      ctx.drawImage(frontCanvas, 0, 0);
+      ctx.drawImage(backCanvas, 0, 1000 + gap);
+      
+      const link = document.createElement('a');
+      link.download = `明信片-双面合并.png`;
+      link.href = mergeCanvas.toDataURL('image/png');
+      link.click();
+    } catch (err) {
+      console.error(err);
+      alert('生成失败，请重试');
+    }
+    setIsGenerating(false);
+  };
+
+  const handleStampSelect = (item) => {
+    if (item.type === 'img') {
+      setCustomStamp(item.src);
+      setStamp(null);
+    } else {
+      setStamp(item.content);
+      setCustomStamp(null);
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-stone-100 p-8 font-sans text-stone-800">
+      <div className="max-w-7xl mx-auto">
+        <div className="text-center mb-10">
+          <h1 className="text-4xl font-serif font-bold text-amber-900 mb-2">旅行明信片工坊</h1>
+          <p className="text-amber-700">记录此刻，寄给未来的自己</p>
+        </div>
+        
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+          {/* 左侧控制 */}
+          <div className="lg:col-span-5 space-y-6">
+            <div className="bg-white rounded-xl shadow-sm p-6 border border-stone-200">
+              <h2 className="text-lg font-bold text-amber-900 mb-4 flex items-center gap-2">
+                <Image className="w-5 h-5" />
+                正面：风景图片
+              </h2>
+              <div className="border-2 border-dashed border-amber-200 rounded-lg p-6 text-center hover:bg-amber-50 hover:border-amber-400 transition-all">
+                <input
+                  type="file"
+                  accept="image/*"
+                  onChange={(e) => handleImageUpload(e, setFrontImage)}
+                  className="hidden"
+                  id="front-upload"
+                />
+                <label htmlFor="front-upload" className="cursor-pointer block">
+                  <Upload className="w-8 h-8 mx-auto text-amber-500 mb-2" />
+                  <span className="text-sm font-medium text-stone-600">点击上传图片</span>
+                </label>
+              </div>
+            </div>
+
+            <div className="bg-white rounded-xl shadow-sm p-6 border border-stone-200">
+              <h2 className="text-lg font-bold text-amber-900 mb-4 flex items-center gap-2">
+                <Type className="w-5 h-5" />
+                背面：寄语与收件人
+              </h2>
+              
+              <div className="flex bg-stone-100 p-1 rounded-lg mb-4">
+                <button
+                  onClick={() => setContentMode('text')}
+                  className={`flex-1 py-1.5 text-sm rounded-md transition-all ${contentMode === 'text' ? 'bg-white shadow text-amber-900 font-medium' : 'text-stone-500'}`}
+                >
+                  文字排版
+                </button>
+                <button
+                  onClick={() => setContentMode('image')}
+                  className={`flex-1 py-1.5 text-sm rounded-md transition-all ${contentMode === 'image' ? 'bg-white shadow text-amber-900 font-medium' : 'text-stone-500'}`}
+                >
+                  手写图片
+                </button>
+              </div>
+
+              {contentMode === 'text' ? (
+                <div className="space-y-4">
+                  <textarea
+                    value={contentText}
+                    onChange={(e) => setContentText(e.target.value)}
+                    placeholder="写下你的心情..."
+                    className="w-full h-32 p-3 bg-stone-50 border border-stone-200 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent resize-none text-sm"
+                  />
+                  <div className="flex items-center gap-4">
+                    <div className="flex-1">
+                      <label className="text-xs font-medium text-stone-500 mb-1 block">字号 ({textStyle.fontSize}px)</label>
+                      <input
+                        type="range"
+                        min="50"
+                        max="120"
+                        value={textStyle.fontSize}
+                        onChange={(e) => setTextStyle({...textStyle, fontSize: parseInt(e.target.value)})}
+                        className="w-full h-2 bg-stone-200 rounded-lg appearance-none cursor-pointer accent-amber-600"
+                      />
+                    </div>
+                    <div className="w-32">
+                      <label className="text-xs font-medium text-stone-500 mb-1 block">字体</label>
+                      <select
+                        value={textStyle.fontFamily}
+                        onChange={(e) => setTextStyle({...textStyle, fontFamily: e.target.value})}
+                        className="w-full p-1.5 text-sm border border-stone-200 rounded-lg bg-stone-50"
+                      >
+                        <option value="KaiTi">楷体</option>
+                        <option value="SimSun">宋体</option>
+                        <option value="Microsoft YaHei">黑体</option>
+                        <option value="cursive">手写风</option>
+                      </select>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="border-2 border-dashed border-stone-200 rounded-lg p-4 text-center">
+                  <input
+                    type="file"
+                    accept="image/*"
+                    onChange={(e) => handleImageUpload(e, setContentImage)}
+                    className="hidden"
+                    id="content-upload"
+                  />
+                  <label htmlFor="content-upload" className="cursor-pointer block">
+                    <FileImage className="w-6 h-6 mx-auto text-stone-400 mb-1" />
+                    <span className="text-xs text-stone-500">上传手写文字照片</span>
+                  </label>
+                </div>
+              )}
+
+              <div className="mt-6 pt-6 border-t border-stone-100 space-y-3">
+                <input
+                  type="text"
+                  placeholder="收件人姓名"
+                  value={recipientInfo.name}
+                  onChange={(e) => setRecipientInfo({...recipientInfo, name: e.target.value})}
+                  className="w-full p-2.5 bg-stone-50 border border-stone-200 rounded-lg text-sm focus:ring-2 focus:ring-amber-500"
+                />
+                <textarea
+                  placeholder="收件地址（自动分行）"
+                  value={recipientInfo.address}
+                  onChange={(e) => setRecipientInfo({...recipientInfo, address: e.target.value})}
+                  className="w-full h-20 p-2.5 bg-stone-50 border border-stone-200 rounded-lg text-sm resize-none focus:ring-2 focus:ring-amber-500"
+                />
+              </div>
+            </div>
+
+            <div className="bg-white rounded-xl shadow-sm p-6 border border-stone-200">
+              <h2 className="text-lg font-bold text-amber-900 mb-4">邮资与日期</h2>
+              <div className="flex gap-4">
+                <div className="flex-1">
+                   <div className="grid grid-cols-4 gap-2 mb-2">
+                    {stampOptions.map((item, index) => (
+                      <button
+                        key={index}
+                        onClick={() => handleStampSelect(item)}
+                        className={`h-12 flex items-center justify-center rounded hover:bg-amber-50 border border-transparent transition-all overflow-hidden
+                          ${(item.type === 'img' && customStamp === item.src) || (item.type === 'text' && stamp === item.content) 
+                            ? 'bg-amber-100 border-amber-400' 
+                            : ''}`}
+                      >
+                        {item.type === 'img' ? (
+                          <img src={item.src} alt={item.label} className="w-8 h-auto" />
+                        ) : (
+                          <span className="text-2xl">{item.content}</span>
+                        )}
+                      </button>
+                    ))}
+                  </div>
+                  <label className="block text-xs text-center text-amber-600 cursor-pointer hover:underline">
+                    <input type="file" className="hidden" accept="image/*" onChange={(e) => handleImageUpload(e, (res) => { setCustomStamp(res); setStamp(null); })} />
+                    上传自定义邮票
+                  </label>
+                </div>
+                <div className="w-1/3">
+                  <input
+                    type="text"
+                    value={postmarkDate}
+                    onChange={(e) => setPostmarkDate(e.target.value)}
+                    className="w-full p-2 text-center border border-stone-200 rounded-lg text-sm"
+                  />
+                  <div className="text-xs text-center text-stone-400 mt-1">邮戳日期</div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* 右侧预览 */}
+          <div className="lg:col-span-7 space-y-6">
+            <div className="bg-white p-4 rounded-xl shadow-sm border border-stone-200">
+              <div className="aspect-[3/2] bg-stone-200 rounded overflow-hidden relative group">
+                {frontImage ? (
+                  <img src={frontImage} alt="Front" className="w-full h-full object-cover" />
+                ) : (
+                  <div className="absolute inset-0 flex items-center justify-center text-stone-400">
+                    <span className="text-lg font-serif">正面预览区域</span>
+                  </div>
+                )}
+              </div>
+              <button 
+                onClick={() => handleDownload('front')}
+                disabled={!frontImage || isGenerating}
+                className="w-full mt-3 py-2 bg-stone-800 text-white rounded-lg hover:bg-stone-700 disabled:opacity-50 text-sm flex items-center justify-center gap-2"
+              >
+                <Download className="w-4 h-4" /> 下载正面图
+              </button>
+            </div>
+
+            <div className="bg-white p-4 rounded-xl shadow-sm border border-stone-200">
+              <div className="aspect-[3/2] bg-[#fff8dc] rounded relative overflow-hidden text-stone-800 select-none">
+                <div className="absolute left-1/2 top-8 bottom-8 w-px bg-[#d4a574]"></div>
+
+                <div className="absolute left-8 top-12 bottom-12 right-[52%] overflow-hidden">
+                  {contentMode === 'text' ? (
+                    <p style={{
+                      fontSize: `${textStyle.fontSize * 0.4}px`,
+                      fontFamily: textStyle.fontFamily,
+                      lineHeight: 1.4,
+                      whiteSpace: 'pre-wrap'
+                    }}>{contentText || '在此处预览文字内容...'}</p>
+                  ) : contentImage ? (
+                    <img src={contentImage} className="w-full h-full object-contain" alt="handwriting" />
+                  ) : null}
+                </div>
+
+                <div className="absolute right-0 top-0 bottom-0 left-[50%] p-8">
+                  {/* 邮编框 */}
+                  <div className="absolute top-8 left-8 flex gap-2">
+                    {[...Array(6)].map((_,i) => (
+                      <div key={i} className="w-6 h-6 border border-red-700"></div>
+                    ))}
+                  </div>
+
+                  {/* 邮票 - 修复预览样式，改为 object-contain */}
+                  <div className="absolute top-8 right-8 w-24 h-28 bg-white border border-stone-200 flex items-center justify-center shadow-sm">
+                     {customStamp ? (
+                       <img src={customStamp} className="w-full h-full object-contain p-2" alt="stamp" />
+                     ) : (
+                       <span className="text-4xl">{stamp}</span>
+                     )}
+                  </div>
+
+                  {/* 邮戳 */}
+                  <div className="absolute top-28 right-24 w-16 h-16 rounded-full border-2 border-red-800/60 flex items-center justify-center rotate-[-15deg]">
+                    <span className="text-[10px] text-red-800 font-bold">{postmarkDate}</span>
+                  </div>
+
+                  {/* 收件人预览区域 */}
+                  <div className="absolute top-32 left-8 right-8">
+                    {/* To 行 */}
+                    <div className="border-b border-stone-400 pb-1 mb-4 text-sm font-serif min-h-[1.5rem] flex items-end w-1/2">
+                       {recipientInfo.name ? `To: ${recipientInfo.name}` : ''}
+                    </div>
+                    
+                    {/* 地址行 */}
+                    {recipientInfo.address ? (
+                      recipientInfo.address.split('\n').map((line, i) => (
+                        <div key={i} className="border-b border-stone-400 pb-1 mb-4 text-sm font-serif min-h-[1.5rem] flex items-end">
+                          {line}
+                        </div>
+                      ))
+                    ) : (
+                      <>
+                        <div className="border-b border-stone-400 h-6 mb-4"></div>
+                        <div className="border-b border-stone-400 h-6 mb-4"></div>
+                      </>
+                    )}
+                  </div>
+                </div>
+              </div>
+              
+              <div className="flex gap-3 mt-3">
+                <button 
+                  onClick={() => handleDownload('back')}
+                  disabled={isGenerating}
+                  className="flex-1 py-2 bg-stone-800 text-white rounded-lg hover:bg-stone-700 disabled:opacity-50 text-sm flex items-center justify-center gap-2"
+                >
+                  <Download className="w-4 h-4" /> 下载背面
+                </button>
+                <button 
+                  onClick={handleDownloadBoth}
+                  disabled={!frontImage || isGenerating}
+                  className="flex-1 py-2 bg-amber-700 text-white rounded-lg hover:bg-amber-800 disabled:opacity-50 text-sm flex items-center justify-center gap-2"
+                >
+                  <Layers className="w-4 h-4" /> 合并下载双面
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
