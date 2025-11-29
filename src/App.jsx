@@ -1,5 +1,44 @@
-import React, { useState } from 'react';
-import { Upload, Download, Image, Type, FileImage, Layers } from 'lucide-react';
+import React, { useState, useCallback } from 'react';
+// 修改：换成了 ArrowUpFromLine 和 ArrowUpDown 这两个绝对安全的图标
+import { Upload, Download, Image, Type, FileImage, Layers, X, Check, ZoomIn, ArrowUpFromLine, ArrowUpDown } from 'lucide-react';
+import Cropper from 'react-easy-crop';
+
+// === 辅助函数：将裁剪后的区域转换为图片 ===
+const createImage = (url) =>
+  new Promise((resolve, reject) => {
+    const image = new window.Image();
+    image.addEventListener('load', () => resolve(image));
+    image.addEventListener('error', (error) => reject(error));
+    image.setAttribute('crossOrigin', 'anonymous');
+    image.src = url;
+  });
+
+async function getCroppedImg(imageSrc, pixelCrop) {
+  const image = await createImage(imageSrc);
+  const canvas = document.createElement('canvas');
+  const ctx = canvas.getContext('2d');
+
+  canvas.width = pixelCrop.width;
+  canvas.height = pixelCrop.height;
+
+  ctx.drawImage(
+    image,
+    pixelCrop.x,
+    pixelCrop.y,
+    pixelCrop.width,
+    pixelCrop.height,
+    0,
+    0,
+    pixelCrop.width,
+    pixelCrop.height
+  );
+
+  return new Promise((resolve) => {
+    canvas.toBlob((blob) => {
+      resolve(URL.createObjectURL(blob));
+    }, 'image/jpeg', 0.95);
+  });
+}
 
 export default function PostcardGenerator() {
   const [frontImage, setFrontImage] = useState(null);
@@ -12,16 +51,23 @@ export default function PostcardGenerator() {
   });
   
   const [stamp, setStamp] = useState(null); 
-  // 默认加载中国国旗
   const [customStamp, setCustomStamp] = useState('https://flagcdn.com/w320/cn.png');
-  
   const [postmarkDate, setPostmarkDate] = useState(new Date().toLocaleDateString('zh-CN'));
   
   const [textStyle, setTextStyle] = useState({
     fontSize: 50,
-    fontFamily: 'KaiTi'
+    fontFamily: 'KaiTi',
+    verticalAlign: 'top' // 'top' | 'center'
   });
   const [isGenerating, setIsGenerating] = useState(false);
+
+  // === 裁剪相关状态 ===
+  const [cropImageSrc, setCropImageSrc] = useState(null);
+  const [crop, setCrop] = useState({ x: 0, y: 0 });
+  const [zoom, setZoom] = useState(1);
+  const [croppedAreaPixels, setCroppedAreaPixels] = useState(null);
+  const [isCropping, setIsCropping] = useState(false);
+  const [croppingTarget, setCroppingTarget] = useState(null);
 
   const stampOptions = [
     { type: 'img', src: 'https://flagcdn.com/w320/cn.png', label: 'CN' },
@@ -34,12 +80,43 @@ export default function PostcardGenerator() {
     { type: 'text', content: '🌊', label: 'Wave' },
   ];
 
-  const handleImageUpload = (e, setter) => {
+  const handleFileSelect = (e, target) => {
     const file = e.target.files[0];
     if (file) {
       const reader = new FileReader();
-      reader.onload = (event) => setter(event.target.result);
+      reader.onload = () => {
+        setCropImageSrc(reader.result);
+        setCroppingTarget(target);
+        setIsCropping(true);
+        setZoom(1);
+        setCrop({ x: 0, y: 0 });
+      };
       reader.readAsDataURL(file);
+    }
+    e.target.value = null;
+  };
+
+  const onCropComplete = useCallback((croppedArea, croppedAreaPixels) => {
+    setCroppedAreaPixels(croppedAreaPixels);
+  }, []);
+
+  const handleCropConfirm = async () => {
+    try {
+      const croppedImage = await getCroppedImg(cropImageSrc, croppedAreaPixels);
+      
+      if (croppingTarget === 'front') {
+        setFrontImage(croppedImage);
+      } else if (croppingTarget === 'content') {
+        setContentImage(croppedImage);
+      } else if (croppingTarget === 'stamp') {
+        setCustomStamp(croppedImage);
+        setStamp(null);
+      }
+      setIsCropping(false);
+      setCropImageSrc(null);
+    } catch (e) {
+      console.error(e);
+      alert('裁剪失败，请重试');
     }
   };
 
@@ -53,9 +130,9 @@ export default function PostcardGenerator() {
     });
   };
 
-  const wrapText = (ctx, text, x, y, maxWidth, lineHeight) => {
+  const getLines = (ctx, text, maxWidth) => {
+    const lines = [];
     const paragraphs = text.split('\n');
-    let currentY = y;
 
     paragraphs.forEach(paragraph => {
       let line = '';
@@ -67,16 +144,15 @@ export default function PostcardGenerator() {
         const testWidth = metrics.width;
         
         if (testWidth > maxWidth && n > 0) {
-          ctx.fillText(line, x, currentY);
+          lines.push(line);
           line = words[n];
-          currentY += lineHeight;
         } else {
           line = testLine;
         }
       }
-      ctx.fillText(line, x, currentY);
-      currentY += lineHeight;
+      lines.push(line);
     });
+    return lines;
   };
 
   const generateCanvas = async (side) => {
@@ -90,10 +166,7 @@ export default function PostcardGenerator() {
     if (side === 'front') {
       if (frontImage) {
         const img = await loadImage(frontImage);
-        const ratio = Math.max(width / img.width, height / img.height);
-        const centerShift_x = (width - img.width * ratio) / 2;
-        const centerShift_y = (height - img.height * ratio) / 2;
-        ctx.drawImage(img, 0, 0, img.width, img.height, centerShift_x, centerShift_y, img.width * ratio, img.height * ratio);
+        ctx.drawImage(img, 0, 0, width, height);
       } else {
         ctx.fillStyle = '#e0e0e0';
         ctx.fillRect(0, 0, width, height);
@@ -122,15 +195,28 @@ export default function PostcardGenerator() {
         ctx.font = `${textStyle.fontSize}px ${textStyle.fontFamily}, serif`;
         ctx.textAlign = 'left';
         ctx.textBaseline = 'top';
-        wrapText(ctx, contentText, 60, 80, (width / 2) - 120, textStyle.fontSize * 1.4);
+
+        const maxWidth = (width / 2) - 120;
+        const lineHeight = textStyle.fontSize * 1.4;
+        const lines = getLines(ctx, contentText, maxWidth);
+        
+        const totalTextHeight = lines.length * lineHeight;
+        const containerHeight = height - 160; 
+        
+        let startY = 80; 
+        if (textStyle.verticalAlign === 'center') {
+          startY = 80 + Math.max(0, (containerHeight - totalTextHeight) / 2);
+        }
+
+        lines.forEach((line, index) => {
+          ctx.fillText(line, 60, startY + (index * lineHeight));
+        });
+
       } else if (contentMode === 'image' && contentImage) {
         const img = await loadImage(contentImage);
         const contentWidth = width / 2 - 100;
         const contentHeight = height - 160;
-        const scale = Math.min(contentWidth / img.width, contentHeight / img.height);
-        const w = img.width * scale;
-        const h = img.height * scale;
-        ctx.drawImage(img, 60 + (contentWidth - w)/2, 80 + (contentHeight - h)/2, w, h);
+        ctx.drawImage(img, 60, 80, contentWidth, contentHeight);
       }
 
       // === 右侧区域 ===
@@ -153,32 +239,21 @@ export default function PostcardGenerator() {
       const stampX = width - stampSize - 60;
       const stampY = 60;
       
-      // 绘制白色背景
       ctx.fillStyle = '#fff';
       ctx.fillRect(stampX, stampY, stampSize, stampSize * 1.2); 
       
       if (customStamp) {
         const sImg = await loadImage(customStamp);
-        
-        // --- 核心修复：计算图片缩放比例，保持完整不变形 ---
-        // 邮票内部可绘制区域（留出 15px 边距）
         const innerX = stampX + 15;
         const innerY = stampY + 15;
         const innerW = stampSize - 30;
         const innerH = stampSize * 1.2 - 30;
-
-        // 计算 "Contain" 比例：取宽比和高比中较小的那个
         const scale = Math.min(innerW / sImg.width, innerH / sImg.height);
-        
         const drawW = sImg.width * scale;
         const drawH = sImg.height * scale;
-        
-        // 居中绘制
         const drawX = innerX + (innerW - drawW) / 2;
         const drawY = innerY + (innerH - drawH) / 2;
-
         ctx.drawImage(sImg, drawX, drawY, drawW, drawH);
-        
       } else if (stamp) {
         ctx.fillStyle = '#333';
         ctx.font = '100px sans-serif';
@@ -233,7 +308,6 @@ export default function PostcardGenerator() {
       ctx.textAlign = 'left';
       ctx.textBaseline = 'bottom';
 
-      // To 姓名行
       if (recipientInfo.name) {
          ctx.fillText(`To: ${recipientInfo.name}`, lineStartX, lineY - 10);
       }
@@ -244,7 +318,6 @@ export default function PostcardGenerator() {
       ctx.lineTo(nameLineEndX, lineY); 
       ctx.stroke();
 
-      // 地址行
       const addressLines = recipientInfo.address ? recipientInfo.address.split('\n') : [];
       const linesToDraw = addressLines.length > 0 ? addressLines : ['', ''];
       
@@ -335,13 +408,13 @@ export default function PostcardGenerator() {
                 <input
                   type="file"
                   accept="image/*"
-                  onChange={(e) => handleImageUpload(e, setFrontImage)}
+                  onChange={(e) => handleFileSelect(e, 'front')}
                   className="hidden"
                   id="front-upload"
                 />
                 <label htmlFor="front-upload" className="cursor-pointer block">
                   <Upload className="w-8 h-8 mx-auto text-amber-500 mb-2" />
-                  <span className="text-sm font-medium text-stone-600">点击上传图片</span>
+                  <span className="text-sm font-medium text-stone-600">点击上传并裁剪图片</span>
                 </label>
               </div>
             </div>
@@ -375,30 +448,61 @@ export default function PostcardGenerator() {
                     placeholder="写下你的心情..."
                     className="w-full h-32 p-3 bg-stone-50 border border-stone-200 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent resize-none text-sm"
                   />
-                  <div className="flex items-center gap-4">
-                    <div className="flex-1">
-                      <label className="text-xs font-medium text-stone-500 mb-1 block">字号 ({textStyle.fontSize}px)</label>
-                      <input
-                        type="range"
-                        min="50"
-                        max="120"
-                        value={textStyle.fontSize}
-                        onChange={(e) => setTextStyle({...textStyle, fontSize: parseInt(e.target.value)})}
-                        className="w-full h-2 bg-stone-200 rounded-lg appearance-none cursor-pointer accent-amber-600"
-                      />
+                  
+                  {/* 字号、字体、对齐控制栏 */}
+                  <div className="space-y-3">
+                    <div className="flex items-center gap-4">
+                      <div className="flex-1">
+                        <label className="text-xs font-medium text-stone-500 mb-1 block">字号 ({textStyle.fontSize}px)</label>
+                        <input
+                          type="range"
+                          min="35"
+                          max="120"
+                          value={textStyle.fontSize}
+                          onChange={(e) => setTextStyle({...textStyle, fontSize: parseInt(e.target.value)})}
+                          className="w-full h-2 bg-stone-200 rounded-lg appearance-none cursor-pointer accent-amber-600"
+                        />
+                      </div>
+                      <div className="w-32">
+                        <label className="text-xs font-medium text-stone-500 mb-1 block">字体</label>
+                        <select
+                          value={textStyle.fontFamily}
+                          onChange={(e) => setTextStyle({...textStyle, fontFamily: e.target.value})}
+                          className="w-full p-1.5 text-sm border border-stone-200 rounded-lg bg-stone-50"
+                        >
+                          <option value="KaiTi">楷体</option>
+                          <option value="SimSun">宋体</option>
+                          <option value="Microsoft YaHei">黑体</option>
+                          <option value="cursive">手写风</option>
+                        </select>
+                      </div>
                     </div>
-                    <div className="w-32">
-                      <label className="text-xs font-medium text-stone-500 mb-1 block">字体</label>
-                      <select
-                        value={textStyle.fontFamily}
-                        onChange={(e) => setTextStyle({...textStyle, fontFamily: e.target.value})}
-                        className="w-full p-1.5 text-sm border border-stone-200 rounded-lg bg-stone-50"
-                      >
-                        <option value="KaiTi">楷体</option>
-                        <option value="SimSun">宋体</option>
-                        <option value="Microsoft YaHei">黑体</option>
-                        <option value="cursive">手写风</option>
-                      </select>
+                    
+                    {/* 垂直对齐控制 */}
+                    <div>
+                      <label className="text-xs font-medium text-stone-500 mb-1 block">垂直对齐</label>
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => setTextStyle({...textStyle, verticalAlign: 'top'})}
+                          className={`flex-1 py-1.5 px-3 rounded text-sm flex items-center justify-center gap-2 border transition-all
+                            ${textStyle.verticalAlign === 'top' 
+                              ? 'bg-amber-100 border-amber-400 text-amber-900' 
+                              : 'bg-stone-50 border-stone-200 text-stone-500 hover:bg-stone-100'}`}
+                        >
+                          <ArrowUpFromLine className="w-4 h-4" />
+                          顶端对齐
+                        </button>
+                        <button
+                          onClick={() => setTextStyle({...textStyle, verticalAlign: 'center'})}
+                          className={`flex-1 py-1.5 px-3 rounded text-sm flex items-center justify-center gap-2 border transition-all
+                            ${textStyle.verticalAlign === 'center' 
+                              ? 'bg-amber-100 border-amber-400 text-amber-900' 
+                              : 'bg-stone-50 border-stone-200 text-stone-500 hover:bg-stone-100'}`}
+                        >
+                          <ArrowUpDown className="w-4 h-4" />
+                          垂直居中
+                        </button>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -407,13 +511,13 @@ export default function PostcardGenerator() {
                   <input
                     type="file"
                     accept="image/*"
-                    onChange={(e) => handleImageUpload(e, setContentImage)}
+                    onChange={(e) => handleFileSelect(e, 'content')}
                     className="hidden"
                     id="content-upload"
                   />
                   <label htmlFor="content-upload" className="cursor-pointer block">
                     <FileImage className="w-6 h-6 mx-auto text-stone-400 mb-1" />
-                    <span className="text-xs text-stone-500">上传手写文字照片</span>
+                    <span className="text-xs text-stone-500">上传手写文字照片 (可裁剪)</span>
                   </label>
                 </div>
               )}
@@ -458,7 +562,7 @@ export default function PostcardGenerator() {
                     ))}
                   </div>
                   <label className="block text-xs text-center text-amber-600 cursor-pointer hover:underline">
-                    <input type="file" className="hidden" accept="image/*" onChange={(e) => handleImageUpload(e, (res) => { setCustomStamp(res); setStamp(null); })} />
+                    <input type="file" className="hidden" accept="image/*" onChange={(e) => handleFileSelect(e, 'stamp')} />
                     上传自定义邮票
                   </label>
                 </div>
@@ -500,7 +604,13 @@ export default function PostcardGenerator() {
               <div className="aspect-[3/2] bg-[#fff8dc] rounded relative overflow-hidden text-stone-800 select-none">
                 <div className="absolute left-1/2 top-8 bottom-8 w-px bg-[#d4a574]"></div>
 
-                <div className="absolute left-8 top-12 bottom-12 right-[52%] overflow-hidden">
+                {/* 左侧内容预览 - 支持垂直居中 */}
+                <div 
+                  className="absolute left-8 top-12 bottom-12 right-[52%] overflow-hidden flex flex-col"
+                  style={{
+                    justifyContent: textStyle.verticalAlign === 'center' ? 'center' : 'flex-start'
+                  }}
+                >
                   {contentMode === 'text' ? (
                     <p style={{
                       fontSize: `${textStyle.fontSize * 0.4}px`,
@@ -509,7 +619,7 @@ export default function PostcardGenerator() {
                       whiteSpace: 'pre-wrap'
                     }}>{contentText || '在此处预览文字内容...'}</p>
                   ) : contentImage ? (
-                    <img src={contentImage} className="w-full h-full object-contain" alt="handwriting" />
+                    <img src={contentImage} className="w-full h-full object-cover" alt="handwriting" />
                   ) : null}
                 </div>
 
@@ -521,7 +631,7 @@ export default function PostcardGenerator() {
                     ))}
                   </div>
 
-                  {/* 邮票 - 修复预览样式，改为 object-contain */}
+                  {/* 邮票 */}
                   <div className="absolute top-8 right-8 w-24 h-28 bg-white border border-stone-200 flex items-center justify-center shadow-sm">
                      {customStamp ? (
                        <img src={customStamp} className="w-full h-full object-contain p-2" alt="stamp" />
@@ -537,12 +647,9 @@ export default function PostcardGenerator() {
 
                   {/* 收件人预览区域 */}
                   <div className="absolute top-32 left-8 right-8">
-                    {/* To 行 */}
                     <div className="border-b border-stone-400 pb-1 mb-4 text-sm font-serif min-h-[1.5rem] flex items-end w-1/2">
                        {recipientInfo.name ? `To: ${recipientInfo.name}` : ''}
                     </div>
-                    
-                    {/* 地址行 */}
                     {recipientInfo.address ? (
                       recipientInfo.address.split('\n').map((line, i) => (
                         <div key={i} className="border-b border-stone-400 pb-1 mb-4 text-sm font-serif min-h-[1.5rem] flex items-end">
@@ -578,6 +685,63 @@ export default function PostcardGenerator() {
             </div>
           </div>
         </div>
+
+        {/* 裁剪弹窗 */}
+        {isCropping && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4">
+            <div className="bg-white rounded-xl w-full max-w-2xl overflow-hidden flex flex-col h-[80vh]">
+              <div className="p-4 border-b flex justify-between items-center bg-stone-50">
+                <h3 className="font-bold text-stone-800 flex items-center gap-2">
+                  <ZoomIn className="w-5 h-5" />
+                  裁剪图片
+                </h3>
+                <button onClick={() => setIsCropping(false)} className="text-stone-500 hover:text-stone-800">
+                  <X className="w-6 h-6" />
+                </button>
+              </div>
+              
+              <div className="relative flex-1 bg-stone-900">
+                <Cropper
+                  image={cropImageSrc}
+                  crop={crop}
+                  zoom={zoom}
+                  aspect={
+                    croppingTarget === 'front' ? 3 / 2 : 
+                    croppingTarget === 'content' ? 650 / 840 : 
+                    1 
+                  }
+                  onCropChange={setCrop}
+                  onZoomChange={setZoom}
+                  onCropComplete={onCropComplete}
+                />
+              </div>
+
+              <div className="p-6 bg-white space-y-4">
+                <div className="flex items-center gap-4">
+                  <span className="text-sm font-medium text-stone-600">缩放</span>
+                  <input
+                    type="range"
+                    value={zoom}
+                    min={1}
+                    max={3}
+                    step={0.1}
+                    aria-labelledby="Zoom"
+                    onChange={(e) => setZoom(e.target.value)}
+                    className="flex-1 h-2 bg-stone-200 rounded-lg appearance-none cursor-pointer accent-amber-600"
+                  />
+                </div>
+                <button
+                  onClick={handleCropConfirm}
+                  className="w-full py-3 bg-amber-600 text-white rounded-lg hover:bg-amber-700 font-bold flex items-center justify-center gap-2"
+                >
+                  <Check className="w-5 h-5" />
+                  确认裁剪
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
       </div>
     </div>
   );
