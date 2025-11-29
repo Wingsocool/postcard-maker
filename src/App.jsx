@@ -1,5 +1,4 @@
 import React, { useState, useCallback } from 'react';
-// 修改：换成了 ArrowUpFromLine 和 ArrowUpDown 这两个绝对安全的图标
 import { Upload, Download, Image, Type, FileImage, Layers, X, Check, ZoomIn, ArrowUpFromLine, ArrowUpDown } from 'lucide-react';
 import Cropper from 'react-easy-crop';
 
@@ -53,11 +52,13 @@ export default function PostcardGenerator() {
   const [stamp, setStamp] = useState(null); 
   const [customStamp, setCustomStamp] = useState('https://flagcdn.com/w320/cn.png');
   const [postmarkDate, setPostmarkDate] = useState(new Date().toLocaleDateString('zh-CN'));
+  // 新增：邮戳地点，默认为 POST OFFICE
+  const [postmarkLocation, setPostmarkLocation] = useState('Post Office');
   
   const [textStyle, setTextStyle] = useState({
     fontSize: 50,
     fontFamily: 'KaiTi',
-    verticalAlign: 'top' // 'top' | 'center'
+    verticalAlign: 'top'
   });
   const [isGenerating, setIsGenerating] = useState(false);
 
@@ -290,10 +291,19 @@ export default function PostcardGenerator() {
       ctx.rotate(-Math.PI / 6);
       ctx.fillStyle = 'rgba(180, 40, 40, 0.8)';
       ctx.textAlign = 'center';
+      
+      // 绘制日期
       ctx.font = 'bold 16px Arial';
-      ctx.fillText(postmarkDate, 0, 0);
+      ctx.fillText(postmarkDate, 0, -10);
+      
+      // 绘制地点 (默认为 POST OFFICE)
       ctx.font = '12px Arial';
-      ctx.fillText("POST OFFICE", 0, 20);
+      // 转大写看起来更像邮戳
+      const locationText = (postmarkLocation || "POST OFFICE").toUpperCase();
+      // 如果地点名字太长，稍微缩小字体
+      if (locationText.length > 15) ctx.font = '10px Arial';
+      ctx.fillText(locationText, 0, 15);
+      
       ctx.restore();
 
       // 4. 收件人信息
@@ -573,7 +583,14 @@ export default function PostcardGenerator() {
                     onChange={(e) => setPostmarkDate(e.target.value)}
                     className="w-full p-2 text-center border border-stone-200 rounded-lg text-sm"
                   />
-                  <div className="text-xs text-center text-stone-400 mt-1">邮戳日期</div>
+                  <input
+                    type="text"
+                    value={postmarkLocation}
+                    onChange={(e) => setPostmarkLocation(e.target.value)}
+                    placeholder="地点"
+                    className="w-full p-2 text-center border border-stone-200 rounded-lg text-sm mt-2"
+                  />
+                  <div className="text-xs text-center text-stone-400 mt-1">邮戳日期/地点</div>
                 </div>
               </div>
             </div>
@@ -640,9 +657,12 @@ export default function PostcardGenerator() {
                      )}
                   </div>
 
-                  {/* 邮戳 */}
-                  <div className="absolute top-28 right-24 w-16 h-16 rounded-full border-2 border-red-800/60 flex items-center justify-center rotate-[-15deg]">
-                    <span className="text-[10px] text-red-800 font-bold">{postmarkDate}</span>
+                  {/* 邮戳 - 预览同步显示地点 */}
+                  <div className="absolute top-28 right-24 w-16 h-16 rounded-full border-2 border-red-800/60 flex flex-col items-center justify-center rotate-[-15deg] bg-red-50/10">
+                    <span className="text-[10px] text-red-800 font-bold leading-none mb-0.5">{postmarkDate}</span>
+                    <span className="text-[8px] text-red-800 font-serif uppercase tracking-tighter leading-none">
+                      {postmarkLocation || 'POST OFFICE'}
+                    </span>
                   </div>
 
                   {/* 收件人预览区域 */}
